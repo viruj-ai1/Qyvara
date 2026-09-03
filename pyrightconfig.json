@@ -1,0 +1,14 @@
+{
+    "exclude": [
+        "**/__pyrefly_virtual__/**",
+        "../**"
+    ],
+    "executionEnvironments": [
+        {
+            "root": "Process Optimisation",
+            "extraPaths": [
+                "C:/Users/Administrator/AppData/Local/Programs/Python/Python313/Lib/site-packages"
+            ]
+        }
+    ]
+}

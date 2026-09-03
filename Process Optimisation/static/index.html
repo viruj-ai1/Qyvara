@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Viruj Pharmaceuticals - Employee Portal</title>
+    <!-- Chart.js for the Pie Chart -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --viruj-teal: #00847d;
+            --viruj-gold: #f3b93e;
+            --dark-bg: #222831;
+            --light-gray: #f4f7f6;
+        }
+
+        body {
+            font-family: 'Roboto', sans-serif;
+            margin: 0;
+            background-color: var(--light-gray);
+            color: #333;
+        }
+
+        /* Header Styles */
+        header {
+            background: white;
+            padding: 10px 5%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .logo-container img {
+            height: 60px; /* Adjust based on your logo aspect ratio */
+        }
+
+        nav {
+            background: var(--dark-bg);
+            padding: 0 5%;
+            display: flex;
+        }
+
+        nav a {
+            color: white;
+            text-decoration: none;
+            padding: 15px 20px;
+            text-transform: uppercase;
+            font-size: 13px;
+            font-weight: bold;
+        }
+
+        nav a.active {
+            background: var(--viruj-gold);
+            color: white;
+        }
+
+        /* Main Layout */
+        .container {
+            display: flex;
+            padding: 20px 5%;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        /* Table Styling */
+        .employee-list {
+            flex: 2;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            min-width: 600px;
+        }
+
+        h2 { color: var(--viruj-teal); border-bottom: 2px solid var(--viruj-gold); padding-bottom: 10px; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        th {
+            background-color: var(--viruj-teal);
+            color: white;
+            text-align: left;
+            padding: 12px;
+        }
+
+        td {
+            padding: 10px;
+            border-bottom: 1px solid #ddd;
+            cursor: pointer;
+        }
+
+        tr:hover { background-color: #f1f1f1; }
+
+        /* Stats Card */
+        .stats-panel {
+            flex: 1;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            min-width: 350px;
+            position: sticky;
+            top: 20px;
+            height: fit-content;
+        }
+
+        .calc-box {
+            background: #e8f4f3;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+
+        .input-group {
+            margin-bottom: 10px;
+        }
+
+        .input-group label { display: block; font-size: 12px; font-weight: bold; }
+        .input-group input { 
+            width: 100%; 
+            padding: 8px; 
+            border: 1px solid #ccc; 
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        .salary-result {
+            font-size: 20px;
+            font-weight: bold;
+            color: var(--viruj-teal);
+            margin-top: 10px;
+            text-align: center;
+        }
+
+        #chartContainer {
+            width: 100%;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="logo-container">
+        <!-- Replace 'logo.png' with your actual logo file -->
+        <img src="https://via.placeholder.com/250x60?text=VIRUJ+PHARMACEUTICALS" alt="Viruj Logo">
+    </div>
+</header>
+
+<nav>
+    <a href="#" class="active">Home</a>
+    <a href="#">About Viruj</a>
+    <a href="#">Products</a>
+    <a href="#">Gallery</a>
+    <a href="#">Contact Us</a>
+</nav>
+
+<div class="container">
+    <!-- Left Side: Table -->
+    <div class="employee-list">
+        <h2>Employee Directory</h2>
+        <table id="empTable">
+            <thead>
+                <tr>
+                    <th>Emp ID</th>
+                    <th>Name</th>
+                    <th>Designation</th>
+                    <th>Department</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody">
+                <tr><td colspan="4">Loading employee data...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Right Side: Stats & Calculator -->
+    <div class="stats-panel" id="statsPanel">
+        <h2>Employee Statistics</h2>
+        <div id="selectedEmpInfo">
+            <p>Select an employee from the list to see analytics and calculate salary.</p>
+        </div>
+
+        <div id="calculatorUI" style="display:none;">
+            <div class="calc-box">
+                <div class="input-group">
+                    <label>Gross Salary (₹)</label>
+                    <input type="number" id="grossSalary" value="50000" oninput="calculateSalary()">
+                </div>
+                <div class="input-group">
+                    <label>Total Days in Month</label>
+                    <input type="number" id="totalDays" value="30" oninput="calculateSalary()">
+                </div>
+                <div class="input-group">
+                    <label>Loss of Pay Days (LOP)</label>
+                    <input type="number" id="lopDays" value="2" oninput="calculateSalary()">
+                </div>
+                <div class="input-group">
+                    <label>Overtime Hours (OT)</label>
+                    <input type="number" id="otHours" value="10" oninput="calculateSalary()">
+                </div>
+                <hr>
+                <div class="salary-result" id="finalSalaryText">Adjusted Salary: ₹ 0</div>
+            </div>
+
+            <div id="chartContainer">
+                <canvas id="statsChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // We will store the fetched employees here
+    let employees = [];
+    let currentChart = null;
+
+    // Fetch employee data from the backend when the page loads
+    async function fetchEmployees() {
+        try {
+            // This will call the FastAPI backend we are going to build
+            const response = await fetch('/api/employees');
+            if (!response.ok) throw new Error('Network response was not ok');
+            
+            employees = await response.json();
+            renderTable();
+        } catch (error) {
+            console.error("Failed to fetch employees:", error);
+            document.getElementById('tableBody').innerHTML = `<tr><td colspan="4" style="color:red; font-weight:bold;">Error loading employees. Ensure FastAPI backend is running and connected to Supabase.</td></tr>`;
+        }
+    }
+
+    // Render the table dynamically based on API data
+    function renderTable() {
+        const tableBody = document.getElementById('tableBody');
+        tableBody.innerHTML = ''; // Clear loading text
+        
+        if (employees.length === 0) {
+            tableBody.innerHTML = `<tr><td colspan="4">No employees records found in the database.</td></tr>`;
+            return;
+        }
+
+        employees.forEach(emp => {
+            // Map Supabase columns to the frontend display
+            // Update these property names if your Supabase column names differ
+            const empId = emp.emp_id || emp.id || 'N/A';
+            const empName = emp.name_of_employee || emp.name || 'Unknown';
+            const designation = emp.designation || emp.role || 'N/A';
+            const department = emp.department || emp.dept || 'N/A';
+
+            let row = `
+                <tr onclick="showStats('${empId}')">
+                    <td>${empId}</td>
+                    <td><strong>${empName}</strong></td>
+                    <td>${designation}</td>
+                    <td>${department}</td>
+                </tr>
+            `;
+            tableBody.innerHTML += row;
+        });
+    }
+
+    function showStats(empId) {
+        // Find employee
+        const emp = employees.find(e => e.emp_id === empId || e.id === empId);
+        if (!emp) return;
+
+        const empName = emp.name_of_employee || emp.name || 'Unknown';
+        const bank = emp.bank || 'Bank info not available';
+
+        document.getElementById('selectedEmpInfo').innerHTML = `
+            <h3 style="margin-bottom:5px;">${empName}</h3>
+            <small>${empId} | ${bank}</small>
+        `;
+        document.getElementById('calculatorUI').style.display = 'block';
+        
+        // You could also populate grossSalary if that's stored in the DB
+        if(emp.gross_salary) {
+            document.getElementById('grossSalary').value = emp.gross_salary;
+        }
+
+        calculateSalary();
+    }
+
+    // Calculation Formula
+    function calculateSalary() {
+        const gross = parseFloat(document.getElementById('grossSalary').value) || 0;
+        const totalDays = parseFloat(document.getElementById('totalDays').value) || 1;
+        const lop = parseFloat(document.getElementById('lopDays').value) || 0;
+        const ot = parseFloat(document.getElementById('otHours').value) || 0;
+
+        const daysWorked = totalDays - lop;
+        
+        // Adding a small bonus logic for Overtime (e.g., ₹200 per hour)
+        const otPay = ot * 200; 
+        const adjustedSalary = (gross * (daysWorked / totalDays)) + otPay;
+
+        document.getElementById('finalSalaryText').innerText = `Adjusted Salary: ₹ ${adjustedSalary.toLocaleString(undefined, {minimumFractionDigits: 2})}`;
+
+        updateChart(Math.max(0, daysWorked), lop); // ensure no negative days on chart
+    }
+
+    function updateChart(worked, lop) {
+        const ctx = document.getElementById('statsChart').getContext('2d');
+        
+        if (currentChart) {
+            currentChart.destroy();
+        }
+
+        currentChart = new Chart(ctx, {
+            type: 'pie',
+            data: {
+                labels: ['Days Worked', 'Loss of Pay'],
+                datasets: [{
+                    data: [worked, lop],
+                    backgroundColor: ['#00847d', '#f3b93e'],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { position: 'bottom' },
+                    title: { display: true, text: 'Monthly Attendance Analysis' }
+                }
+            }
+        });
+    }
+
+    // Initialize fetching when the page loads
+    window.onload = fetchEmployees;
+</script>
+
+</body>
+</html>

@@ -1,0 +1,41 @@
+# Git & documentation
+.git
+.gitignore
+README.md
+
+# Python cache & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+
+# IDE settings
+.vscode/
+.idea/
+pyrightconfig.json
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+desktop.ini
+Thumbs.db
+
+# Docker files
+Dockerfile
+.dockerignore
+
+# Unrelated frontend projects & node_modules
+salary-calc-frontend/
+salary-calc-vanilla/
+**/node_modules/
+node_modules/
+
+# Local databases & large cache directories
+chroma_db/
+.streamlit/
+*.xlsx
+

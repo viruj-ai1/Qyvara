@@ -1,0 +1,10 @@
+{
+    "executionEnvironments": [
+        {
+            "root": ".",
+            "extraPaths": [
+                "C:/Users/Administrator/AppData/Local/Programs/Python/Python313/Lib/site-packages"
+            ]
+        }
+    ]
+}
