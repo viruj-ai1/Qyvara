@@ -119,17 +119,12 @@ GROQ_KEY_ENV = get_credential("GROQ_KEY", "") or get_credential("GROQ_API_KEY", 
 st.title("🧪 Chemistry + BMR LLM System")
 
 # =====================================================
-# SIDEBAR CREDENTIALS & PROJECT MANAGEMENT
+# SIDEBAR & PROJECT MANAGEMENT
 # =====================================================
-st.sidebar.header("🔑 API Credentials")
-groq_key = st.sidebar.text_input("Groq API Key", value=GROQ_KEY_ENV, type="password", help="Enter your Groq API key")
-azure_key = st.sidebar.text_input("Azure Doc Intel Key", value=AZURE_KEY_ENV, type="password", help="Enter your Azure Document Intelligence key")
-azure_endpoint = st.sidebar.text_input("Azure Endpoint", value=AZURE_ENDPOINT_ENV, help="Enter your Azure Document Intelligence endpoint")
-
 def get_groq_client():
-    active_key = groq_key or GROQ_KEY_ENV
+    active_key = GROQ_KEY_ENV
     if not active_key:
-        st.sidebar.warning("⚠️ Groq API key missing. Please provide it in the sidebar.")
+        st.sidebar.warning("⚠️ Groq API key missing. Please configure GROQ_API_KEY in environment or secrets.")
         return None
     try:
         return Groq(api_key=active_key)
@@ -334,11 +329,11 @@ with col_bmr:
     uploaded_file = st.file_uploader("Upload BMR PDF", type=["pdf"])
 
 def extract_pdf_with_azure(uploaded_file, file_state_key, text_state_key, table_state_key, name="Document"):
-    active_azure_key = azure_key or AZURE_KEY_ENV
-    active_azure_endpoint = azure_endpoint or AZURE_ENDPOINT_ENV
+    active_azure_key = AZURE_KEY_ENV
+    active_azure_endpoint = AZURE_ENDPOINT_ENV
 
     if not active_azure_key:
-        st.error(f"⚠️ Azure Key is missing. Please provide Azure Doc Intel Key in sidebar to perform OCR.")
+        st.error(f"⚠️ Azure Key is missing. Please configure AZURE_KEY in environment or secrets to perform OCR.")
         return
 
     if uploaded_file.name != st.session_state[file_state_key]:
