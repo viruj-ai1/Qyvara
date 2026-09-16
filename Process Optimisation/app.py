@@ -1,24 +1,22 @@
-# try:
-#     import streamlit.net_util as _st_net_util
-#     _st_net_util.get_internal_ip = lambda: "localhost"
-#     _st_net_util.get_external_ip = lambda: "localhost"
-# except Exception:
-#     pass
-
-import streamlit as st  # type: ignore # pyrefly: ignore [missing-import]
-import pandas as pd
+import streamlit as st  # type: ignore # pyright: ignore [reportMissingImports]
+import pandas as pd  # type: ignore # pyright: ignore [reportMissingImports]
 import uuid
-import fitz  # type: ignore # pyrefly: ignore [missing-import]
+import fitz  # type: ignore # pyright: ignore [reportMissingImports]
 import re
-import requests
-# from playwright.sync_api import sync_playwright # Removing playwright
-from duckduckgo_search import DDGS  # type: ignore # pyrefly: ignore [missing-import]
+import requests  # type: ignore # pyright: ignore [reportMissingImports]
 import time
 import json
 import os
+import urllib.parse
 from typing import Any, cast
 
-st.set_page_config(layout="wide")
+try:
+    from dotenv import load_dotenv  # type: ignore # pyright: ignore [reportMissingImports]
+    load_dotenv()
+except ImportError:
+    pass
+
+st.set_page_config(layout="wide", page_title="Chemistry + BMR LLM System", page_icon="🧪")
 
 # =====================================================
 # PRINTING OPTIMIZATION CSS
@@ -88,17 +86,93 @@ from azure.core.credentials import AzureKeyCredential  # type: ignore # pyrefly:
 
 from groq import Groq, APIStatusError  # type: ignore
 
-from rdkit.Chem.rdChemReactions import ReactionFromSmarts  # type: ignore # pyrefly: ignore [missing-import]
-from rdkit.Chem import Draw  # type: ignore # pyrefly: ignore [missing-import]
+try:
+    from rdkit import Chem  # type: ignore # pyright: ignore [reportMissingImports]
+    from rdkit.Chem import Draw  # type: ignore # pyright: ignore [reportMissingImports]
+    from rdkit.Chem.rdChemReactions import ReactionFromSmarts  # type: ignore # pyright: ignore [reportMissingImports]
+    RDKIT_AVAILABLE = True
+except Exception:
+    Chem = None  # type: ignore
+    Draw = None  # type: ignore
+    ReactionFromSmarts = None  # type: ignore
+    RDKIT_AVAILABLE = False
 
-AZURE_ENDPOINT = "https://doc-inteligence-service.cognitiveservices.azure.com/"
-AZURE_KEY = os.environ.get("AZURE_KEY", "")
+try:
+    from duckduckgo_search import DDGS  # type: ignore # pyrefly: ignore [missing-import]
+    DDGS_AVAILABLE = True
+except ImportError:
+    DDGS_AVAILABLE = False
 
-GROQ_KEY = os.environ.get("GROQ_KEY", "")
+# Credentials setup helper
+def get_credential(key_name: str, default: str = "") -> str:
+    try:
+        if key_name in st.secrets:
+            return str(st.secrets[key_name])
+    except Exception:
+        pass
+    return os.environ.get(key_name, default)
 
-client = Groq(api_key=GROQ_KEY)
+AZURE_ENDPOINT_ENV = get_credential("AZURE_ENDPOINT", "https://doc-inteligence-service.cognitiveservices.azure.com/")
+AZURE_KEY_ENV = get_credential("AZURE_KEY", "")
+GROQ_KEY_ENV = get_credential("GROQ_KEY", "") or get_credential("GROQ_API_KEY", "")
 
 st.title("🧪 Chemistry + BMR LLM System")
+
+# =====================================================
+# SIDEBAR CREDENTIALS & PROJECT MANAGEMENT
+# =====================================================
+st.sidebar.header("🔑 API Credentials")
+groq_key = st.sidebar.text_input("Groq API Key", value=GROQ_KEY_ENV, type="password", help="Enter your Groq API key")
+azure_key = st.sidebar.text_input("Azure Doc Intel Key", value=AZURE_KEY_ENV, type="password", help="Enter your Azure Document Intelligence key")
+azure_endpoint = st.sidebar.text_input("Azure Endpoint", value=AZURE_ENDPOINT_ENV, help="Enter your Azure Document Intelligence endpoint")
+
+def get_groq_client():
+    active_key = groq_key or GROQ_KEY_ENV
+    if not active_key:
+        st.sidebar.warning("⚠️ Groq API key missing. Please provide it in the sidebar.")
+        return None
+    try:
+        return Groq(api_key=active_key)
+    except Exception as e:
+        st.sidebar.error(f"Error initializing Groq client: {e}")
+        return None
+
+st.sidebar.markdown("---")
+st.sidebar.header("💾 Project Management")
+st.sidebar.write("Save your extracted text, summaries, and chat history to a file so you don't have to re-upload PDFs again.")
+
+# Download logic
+def get_project_data():
+    return {
+        "ros_text": st.session_state.get("ros_text", ""),
+        "bmr_text": st.session_state.get("bmr_text", ""),
+        "bmr_detailed_summary": st.session_state.get("bmr_detailed_summary", ""),
+        "messages": st.session_state.get("messages", [])
+    }
+
+json_data = json.dumps(get_project_data(), indent=2)
+st.sidebar.download_button(
+    label="⬇️ Save Analysis to JSON",
+    data=json_data,
+    file_name="Imeglimin_Analysis_Project.json",
+    mime="application/json"
+)
+
+uploaded_project = st.sidebar.file_uploader("Upload Saved Project (.json)", type=["json"])
+
+if uploaded_project is not None:
+    if st.sidebar.button("⬆️ Load Project Data"):
+        try:
+            data = json.load(uploaded_project)
+            st.session_state.ros_text = data.get("ros_text", "")
+            st.session_state.bmr_text = data.get("bmr_text", "")
+            st.session_state.bmr_detailed_summary = data.get("bmr_detailed_summary", "")
+            st.session_state.messages = data.get("messages", [])
+            st.sidebar.success("✅ Project Loaded Successfully!")
+            time.sleep(1)
+            st.rerun()
+        except Exception as e:
+            st.sidebar.error(f"Failed to load project: {e}")
 
 # =====================================================
 # SESSION STATE INITIALIZATION
@@ -128,86 +202,48 @@ if "bmr_detailed_summary" not in st.session_state:
     st.session_state.bmr_detailed_summary = ""
 
 # =====================================================
-# PROJECT MANAGEMENT (SAVE / LOAD)
-# =====================================================
-st.sidebar.header("💾 Project Management")
-st.sidebar.write("Save your extracted text, summaries, and chat history to a file so you don't have to re-upload PDFs again.")
-
-# Download logic
-def get_project_data():
-    return {
-        "ros_text": st.session_state.get("ros_text", ""),
-        "bmr_text": st.session_state.get("bmr_text", ""),
-        "bmr_detailed_summary": st.session_state.get("bmr_detailed_summary", ""),
-        "messages": st.session_state.get("messages", [])
-    }
-
-json_data = json.dumps(get_project_data())
-st.sidebar.download_button(
-    label="⬇️ Save Analysis to JSON",
-    data=json_data,
-    file_name="Imeglimin_Analysis_Project.json",
-    mime="application/json"
-)
-
-st.sidebar.markdown("---")
-uploaded_project = st.sidebar.file_uploader("Upload Saved Project (.json)", type=["json"])
-
-if uploaded_project is not None:
-    if st.sidebar.button("⬆️ Load Project Data"):
-        data = json.load(uploaded_project)
-        st.session_state.ros_text = data.get("ros_text", "")
-        st.session_state.bmr_text = data.get("bmr_text", "")
-        st.session_state.bmr_detailed_summary = data.get("bmr_detailed_summary", "")
-        st.session_state.messages = data.get("messages", [])
-        st.sidebar.success("✅ Project Loaded Successfully!")
-        time.sleep(1)
-        st.rerun()
-
-# =====================================================
 # DUCKDUCKGO SEARCH FUNCTION
 # =====================================================
-def search_web(query):
+def search_web(query: str) -> str:
     """Searches DuckDuckGo for optimization evidence."""
+    if not DDGS_AVAILABLE:
+        return "duckduckgo_search library is not installed."
     results = []
     try:
         with DDGS() as ddgs:
-             # Use html backend to avoid rate limits
-            search_gen = ddgs.text(query, max_results=3, backend="html")
+            search_gen = list(ddgs.text(query, max_results=3))
             for r in search_gen:
                 title = r.get('title', 'No Title')
                 link = r.get('href', '')
                 snippet = r.get('body', 'No Snippet')
                 results.append(f"Title: {title}\nSnippet: {snippet}\nLink: {link}")
-                
     except Exception as e:
-        print(f"Search failed: {e}")
-        return "Search failed or no results found."
+        return f"Search failed or no results found ({e})."
     
-    return "\n\n---\n".join(results)
+    return "\n\n---\n".join(results) if results else "No relevant search results found."
 
 # =====================================================
 # PUBCHEM VALIDATION FUNCTION
 # =====================================================
-def get_pubchem_data(smiles):
-
+def get_pubchem_data(smiles: str):
+    if not smiles or not smiles.strip():
+        return None
     try:
-        url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/{smiles}/property/MolecularFormula,MolecularWeight/JSON"
+        encoded_smiles = urllib.parse.quote(smiles.strip())
+        url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/{encoded_smiles}/property/MolecularFormula,MolecularWeight/JSON"
         r = requests.get(url, timeout=10)
 
         if r.status_code == 200:
             data = r.json()
             props = data["PropertyTable"]["Properties"][0]
-
             return {
                 "Formula": props.get("MolecularFormula"),
                 "MolWeight": props.get("MolecularWeight")
             }
-    except:
+    except Exception:
         return None
 
     return None
-
 
 # =====================================================
 # REACTION INPUT
@@ -239,14 +275,17 @@ with col2:
 
 st.subheader("🧬 Reaction Scheme")
 
-try:
-    rxn = ReactionFromSmarts(
-        f"{reactant_smiles}>>{product_smiles}",
-        useSmiles=True
-    )
-    st.image(Draw.ReactionToImage(rxn))
-except:
-    st.warning("Invalid SMILES")
+if RDKIT_AVAILABLE and ReactionFromSmarts is not None and Draw is not None:
+    try:
+        rxn = ReactionFromSmarts(  # type: ignore # pyright: ignore
+            f"{reactant_smiles}>>{product_smiles}",
+            useSmiles=True
+        )
+        st.image(Draw.ReactionToImage(rxn))  # type: ignore # pyright: ignore
+    except Exception as e:
+        st.warning(f"Could not render reaction scheme for provided SMILES: {e}")
+else:
+    st.info("RDKit library not installed. Reaction scheme visualization unavailable.")
 
 reaction_text = f"""
 Stage: {stage}
@@ -264,16 +303,23 @@ st.header("🧪 PubChem Validation")
 reactant_info = get_pubchem_data(reactant_smiles)
 product_info = get_pubchem_data(product_smiles)
 
-if reactant_info:
-    st.write("### Reactant Validation")
-    st.write(reactant_info)
+vcol1, vcol2 = st.columns(2)
+with vcol1:
+    if reactant_info:
+        st.write("### Reactant Validation")
+        st.json(reactant_info)
+    else:
+        st.info("Reactant validation data unavailable.")
 
-if product_info:
-    st.write("### Product Validation")
-    st.write(product_info)
+with vcol2:
+    if product_info:
+        st.write("### Product Validation")
+        st.json(product_info)
+    else:
+        st.info("Product validation data unavailable.")
 
 # =====================================================
-# OCR
+# OCR / DOCUMENT UPLOAD
 # =====================================================
 st.header("📄 Upload Documents")
 
@@ -288,55 +334,67 @@ with col_bmr:
     uploaded_file = st.file_uploader("Upload BMR PDF", type=["pdf"])
 
 def extract_pdf_with_azure(uploaded_file, file_state_key, text_state_key, table_state_key, name="Document"):
+    active_azure_key = azure_key or AZURE_KEY_ENV
+    active_azure_endpoint = azure_endpoint or AZURE_ENDPOINT_ENV
+
+    if not active_azure_key:
+        st.error(f"⚠️ Azure Key is missing. Please provide Azure Doc Intel Key in sidebar to perform OCR.")
+        return
+
     if uploaded_file.name != st.session_state[file_state_key]:
         st.session_state[file_state_key] = uploaded_file.name
         st.session_state[text_state_key] = ""
         st.session_state[table_state_key] = []
         
-        doc_client = DocumentIntelligenceClient(
-            endpoint=AZURE_ENDPOINT,
-            credential=AzureKeyCredential(AZURE_KEY)
-        )
-
-        pdf = fitz.open(stream=uploaded_file.read(), filetype="pdf")
-        
-        full_text = ""
-
-        progress_bar = st.progress(0, text=f"Processing {name}...")
-
-        for i in range(len(pdf)):
-            single = fitz.open()
-            single.insert_pdf(pdf, from_page=i, to_page=i)
-            page_bytes = single.tobytes()
-
-            poller = doc_client.begin_analyze_document(
-                "prebuilt-layout",
-                body=page_bytes
+        try:
+            doc_client = DocumentIntelligenceClient(
+                endpoint=active_azure_endpoint,
+                credential=AzureKeyCredential(active_azure_key)
             )
 
-            result = poller.result()
-            page_text = ""
+            file_bytes = uploaded_file.getvalue()
+            pdf = fitz.open(stream=file_bytes, filetype="pdf")
+            
+            full_text = ""
+            progress_bar = st.progress(0, text=f"Processing {name}...")
 
-            if result.tables:
-                for table in result.tables:
-                    grid = [["" for _ in range(table.column_count)]
-                            for _ in range(table.row_count)]
+            for i in range(len(pdf)):
+                single = fitz.open()
+                single.insert_pdf(pdf, from_page=i, to_page=i)
+                page_bytes = single.tobytes()
+                single.close()
 
-                    for cell in table.cells:
-                        grid[cell.row_index][cell.column_index] = cell.content
+                poller = doc_client.begin_analyze_document(
+                    "prebuilt-layout",
+                    body=page_bytes
+                )
 
-                    df = pd.DataFrame(grid)
-                    st.session_state[table_state_key].append(df)
-                    page_text += df.to_string(index=False) + "\n"
+                result = poller.result()
+                page_text = ""
 
-            if result.paragraphs:
-                page_text += "\n".join(p.content for p in result.paragraphs)
+                if result.tables:
+                    for table in result.tables:
+                        grid = [["" for _ in range(table.column_count)]
+                                for _ in range(table.row_count)]
 
-            full_text += page_text + "\n"
-            progress_bar.progress((i + 1) / len(pdf), text=f"Processing {name}...")
-        
-        st.session_state[text_state_key] = full_text
-        st.success(f"✅ {name} OCR complete & Cached")
+                        for cell in table.cells:
+                            grid[cell.row_index][cell.column_index] = cell.content
+
+                        df = pd.DataFrame(grid)
+                        st.session_state[table_state_key].append(df)
+                        page_text += df.to_string(index=False) + "\n"
+
+                if result.paragraphs:
+                    page_text += "\n".join(p.content for p in result.paragraphs)
+
+                full_text += page_text + "\n"
+                progress_bar.progress((i + 1) / len(pdf), text=f"Processing {name}...")
+            
+            pdf.close()
+            st.session_state[text_state_key] = full_text
+            st.success(f"✅ {name} OCR complete & Cached")
+        except Exception as e:
+            st.error(f"Error extracting {name} with Azure: {e}")
     else:
         st.info(f"Using cached {name} data.")
 
@@ -347,35 +405,33 @@ with col_ros:
 with col_bmr:
     if uploaded_file:
         extract_pdf_with_azure(uploaded_file, "last_uploaded_file", "bmr_text", "bmr_tables", "BMR")
-    
-    # Show tables if they exist
-    if st.session_state.bmr_tables or st.session_state.ros_tables:
-         with st.expander("View Extracted Tables"):
-             if st.session_state.ros_tables:
-                 st.write("### ROS Tables")
-                 for i, df in enumerate(st.session_state.ros_tables):
-                     st.write(f"Table {i+1}")
-                     st.dataframe(df)
-             if st.session_state.bmr_tables:
-                 st.write("### BMR Tables")
-                 for i, df in enumerate(st.session_state.bmr_tables):
-                     st.write(f"Table {i+1}")
-                     st.dataframe(df)
 
-    # Extract Yields (Quick Regex check)
-    clean = st.session_state.bmr_text.replace("\n"," ")
-    clean = re.sub(r"\s+"," ",clean)
-    clean = clean.replace("–","-")
+# Show extracted tables across main column width if present
+if st.session_state.bmr_tables or st.session_state.ros_tables:
+    with st.expander("View Extracted Tables"):
+        if st.session_state.ros_tables:
+            st.write("### ROS Tables")
+            for i, df in enumerate(st.session_state.ros_tables):
+                st.write(f"Table {i+1}")
+                st.dataframe(df)
+        if st.session_state.bmr_tables:
+            st.write("### BMR Tables")
+            for i, df in enumerate(st.session_state.bmr_tables):
+                st.write(f"Table {i+1}")
+                st.dataframe(df)
+
+# Extract Yields (Quick Regex check across main body)
+if st.session_state.bmr_text:
+    clean = st.session_state.bmr_text.replace("\n", " ")
+    clean = re.sub(r"\s+", " ", clean)
+    clean = clean.replace("–", "-")
 
     if "yield" in clean.lower() or "batch output" in clean.lower():
         st.success("📌 Yield values extracted:")
 
-        # Try to extract Batch Input and Output (Imeglimin format)
         batch_input_match = re.search(r"Batch\s*input[^0-9]*([\d\.]+)", clean, re.I)
         batch_output_match = re.search(r"Batch\s*Output[^0-9]*([\d\.]+)", clean, re.I)
-        # Ensure a literal colon is present so we don't accidentally split "131.50" into "1 : 31.5"
         ratio_match = re.search(r"Theoretical\s*output[^0-9]*1\s*:\s*([\d\.]+)", clean, re.I)
-        # Check for direct theoretical output (like 131.50)
         direct_theo_match = re.search(r"Theoretical\s*output[^0-9]*([\d\.]+)(?!\s*:)", clean, re.I)
 
         if batch_input_match and batch_output_match:
@@ -402,23 +458,21 @@ with col_bmr:
             except Exception as e:
                 st.write(f"Error calculating yield from input/output: {e}")
         else:
-            # Fallback to older theoretical / actual extraction logic
-            theo = re.search(r"Theoretical[^0-9]*([\d\.]+)(?!\s*:)", clean,re.I)
+            theo = re.search(r"Theoretical[^0-9]*([\d\.]+)(?!\s*:)", clean, re.I)
             if theo:
                 st.write(f"Theoretical output: {theo.group(1)}")
 
             yrange = re.search(
                 r"Yield\s*Range[^0-9]*([\d\.]+)\s*-\s*([\d\.]+)",
-                clean,re.I
+                clean, re.I
             )
             if yrange:
                 st.write(f"Yield range: {yrange.group(1)}–{yrange.group(2)}")
 
-            actual = re.search(r"Actual[^0-9]*([\d\.]+)", clean,re.I)
+            actual = re.search(r"Actual[^0-9]*([\d\.]+)", clean, re.I)
             if actual:
                 st.write(f"Actual output: {actual.group(1)}")
 
-            # Try to find yield percentage specifically associated with "Yield"
             yield_match = re.search(r"Yield.{0,50}[:=]\s*(\d+(?:\.\d+)?)\s*%", clean, re.IGNORECASE)
             
             if yield_match:
@@ -434,78 +488,74 @@ with col_bmr:
                 except Exception:
                     pass
 
-
 # =====================================================
-# SUMMARY
+# SUMMARY & AI ANALYSIS
 # =====================================================
 st.header("🤖 AI Analysis & Chat")
 
 if st.button("Generate Initial Summary"):
+    client = get_groq_client()
+    if not client:
+        st.error("Please provide a valid Groq API Key to generate summary.")
+    else:
+        short_bmr = st.session_state.bmr_text[:4000]
+        short_ros = st.session_state.ros_text[:4000]
 
-    # Truncate text to avoid Rate Limits
-    short_bmr = st.session_state.bmr_text[:4000]
-    short_ros = st.session_state.ros_text[:4000]
+        prompt = f"""
+        You are a pharma process expert.
 
-    prompt = f"""
-    You are a pharma process expert.
-
-    Task: Provide a comprehensive and exhaustive summary that integrates the process summary and reaction analysis. 
-    **CRITICAL**: You must capture every single parameter (temperatures, pH, timings, molar equivalents, weights, volumes) and yield data without missing any point. This summary will be used as the sole memory for future yield optimization.
-    
-    Structure your answer as follows:
-    1. **Reaction Scheme Analysis**:
-       - Summarize the transformation (Reactant -> Product) and reaction type.
-       - **CRITICAL**: Carefully analyze if the starting material is already a salt (e.g., Tartrate). If it is, explicitly state that the reaction involves a **Salt Break** step (e.g., using a base like NaOH to form the free base) followed by a **New Salt Formation** step (e.g., using an acid like HCl). Do not oversimplify it as a direct single-step salt formation.
-       - Assess the reagents and their specific roles in each of these steps (e.g., NaOH for breaking the tartrate salt, HCl for forming the hydrochloride salt, solvents for recovery/crystallization).
-       
-    2. **ROS Process Summary (Write-up - LAB SCALE)**:
-       - Summarize the intended chemical write-up and key parameters described in the ROS document.
-       - **CRITICAL NOTE:** The ROS document is typically a Lab Scale or Master reference (e.g., based on 100g). Do not get confused by the absolute weight differences between the ROS and the BMR. Focus on understanding the *intended operational steps, temperatures, times, and molar ratios*.
-
-    3. **Detailed BMR Process Summary (Actual execution - PRODUCTION SCALE)**:
-       - Exhaustively summarize the reported batch manufacturing process steps from the BMR text. Include all specific values (e.g., temperatures, volumes, times).
-       - **CRITICAL NOTE:** The BMR is a Production Scale execution (e.g., hundreds of kgs). 
-       - Highlight key deviations from the ROS methodology (e.g., differing temperatures, extended cooling times, or different solvent ratios). Do not list the absolute scale-up of weights as a "deviation."
-       
-    4. **Critical Parameters & Yields**:
-       - Extract and list all critical process parameters exactly as written.
-       - Report all yields (Theoretical, Actual, Percentage). Note that the yield range might be provided in mole ratios (e.g. 1:1.59).
-       
-    5. **Optimization & Risks**:
-       - Suggest optimization opportunities based on the reaction type and the actual BMR execution to improve overall yield. Look specifically at extended hold times, scale-up cooling inefficiencies, or solvent volumes.
-       - Identify potential safety or quality risks at the production scale.
-
-    Reaction Context:
-    {reaction_text}
-    
-    ROS Content (Process Write-up):
-    {short_ros}
-
-    BMR Content (Actual Batch Record):
-    {short_bmr}
-    """
-
-    try:
-        resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role":"user","content":prompt}],
-            max_tokens=8192
-        )
+        Task: Provide a comprehensive and exhaustive summary that integrates the process summary and reaction analysis. 
+        **CRITICAL**: You must capture every single parameter (temperatures, pH, timings, molar equivalents, weights, volumes) and yield data without missing any point. This summary will be used as the sole memory for future yield optimization.
         
-        summary = resp.choices[0].message.content
-        st.write(summary)
-        
-        # Save as the detailed memory
-        st.session_state.bmr_detailed_summary = summary
-        
-        # Add to history
-        st.session_state.messages.append({"role": "assistant", "content": "Initial comprehensive summary generated and saved to memory for reference."})
-    
-    except APIStatusError as e:
-        st.error(f"API Error: {e}. Try reducing document size or waiting a minute.")
-    except Exception as e:
-        st.error(f"An error occurred: {e}")
+        Structure your answer as follows:
+        1. **Reaction Scheme Analysis**:
+           - Summarize the transformation (Reactant -> Product) and reaction type.
+           - **CRITICAL**: Carefully analyze if the starting material is already a salt (e.g., Tartrate). If it is, explicitly state that the reaction involves a **Salt Break** step (e.g., using a base like NaOH to form the free base) followed by a **New Salt Formation** step (e.g., using an acid like HCl). Do not oversimplify it as a direct single-step salt formation.
+           - Assess the reagents and their specific roles in each of these steps (e.g., NaOH for breaking the tartrate salt, HCl for forming the hydrochloride salt, solvents for recovery/crystallization).
+           
+        2. **ROS Process Summary (Write-up - LAB SCALE)**:
+           - Summarize the intended chemical write-up and key parameters described in the ROS document.
+           - **CRITICAL NOTE:** The ROS document is typically a Lab Scale or Master reference (e.g., based on 100g). Do not get confused by the absolute weight differences between the ROS and the BMR. Focus on understanding the *intended operational steps, temperatures, times, and molar ratios*.
 
+        3. **Detailed BMR Process Summary (Actual execution - PRODUCTION SCALE)**:
+           - Exhaustively summarize the reported batch manufacturing process steps from the BMR text. Include all specific values (e.g., temperatures, volumes, times).
+           - **CRITICAL NOTE:** The BMR is a Production Scale execution (e.g., hundreds of kgs). 
+           - Highlight key deviations from the ROS methodology (e.g., differing temperatures, extended cooling times, or different solvent ratios). Do not list the absolute scale-up of weights as a "deviation."
+           
+        4. **Critical Parameters & Yields**:
+           - Extract and list all critical process parameters exactly as written.
+           - Report all yields (Theoretical, Actual, Percentage). Note that the yield range might be provided in mole ratios (e.g. 1:1.59).
+           
+        5. **Optimization & Risks**:
+           - Suggest optimization opportunities based on the reaction type and the actual BMR execution to improve overall yield. Look specifically at extended hold times, scale-up cooling inefficiencies, or solvent volumes.
+           - Identify potential safety or quality risks at the production scale.
+
+        Reaction Context:
+        {reaction_text}
+        
+        ROS Content (Process Write-up):
+        {short_ros}
+
+        BMR Content (Actual Batch Record):
+        {short_bmr}
+        """
+
+        try:
+            resp = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=8192
+            )
+            
+            summary = resp.choices[0].message.content or ""
+            st.markdown(summary)
+            st.session_state.bmr_detailed_summary = summary
+            st.session_state.messages.append({"role": "assistant", "content": "Initial comprehensive summary generated and saved to memory for reference."})
+        
+        except APIStatusError as e:
+            st.error(f"API Error: {e}. Try reducing document size or waiting a minute.")
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
 
 # =====================================================
 # CHAT INTERFACE
@@ -519,133 +569,100 @@ for message in st.session_state.messages:
 
 # Accept user input
 if prompt := st.chat_input("Ask about optimization, parameters, or the BMR..."):
-    # Add user message to chat history
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    
-    # Display user message in chat message container
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    client = get_groq_client()
+    if not client:
+        st.error("Please provide a valid Groq API Key in sidebar to chat.")
+    else:
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-    # Display assistant response in chat message container
-    with st.chat_message("assistant"):
-        message_placeholder = st.empty()
-        full_response = ""
-        
-        # Use the stored detailed summary if available, otherwise truncate raw BMR
-        if st.session_state.bmr_detailed_summary:
-            process_context = st.session_state.bmr_detailed_summary
-        else:
-            process_context = st.session_state.bmr_text[:4000]
-        
-        # Determine if optimization/evidence is needed - Simple heuristic
-        # If user asks for optimization, we trigger the 2-step process
-        is_optimization_request = any(k in prompt.lower() for k in ["optim", "improve", "better yield", "suggest"])
-        
-        evidence_text = ""
-        
-        if is_optimization_request:
-            status = st.status("🧠 Analyzing BMR for optimization parameters...", expanded=True)
+        with st.chat_message("assistant"):
+            message_placeholder = st.empty()
+            full_response = ""
             
-            # Step 1: Ask LLM for optimization parameters and search query
-            param_prompt = f"""
-            You are a pharma process expert. The user wants to optimize the reaction.
+            process_context = st.session_state.bmr_detailed_summary if st.session_state.bmr_detailed_summary else st.session_state.bmr_text[:4000]
+            is_optimization_request = any(k in prompt.lower() for k in ["optim", "improve", "better yield", "suggest"])
             
-            Reaction: {reaction_text}
-            BMR Context: {process_context}
-            User Question: {prompt}
+            evidence_text = ""
             
-            Task:
-            1. Identify 2-3 critical process parameters that should be optimized (e.g., Temperature, pH, Catalyst Conc).
-            2. Formulate a specific search query to find external evidence/patents for optimizing this specific reaction type and parameters. 
+            if is_optimization_request:
+                status = st.status("🧠 Analyzing BMR for optimization parameters...", expanded=True)
+                
+                param_prompt = f"""
+                You are a pharma process expert. The user wants to optimize the reaction.
+                
+                Reaction: {reaction_text}
+                BMR Context: {process_context}
+                User Question: {prompt}
+                
+                Task:
+                1. Identify 2-3 critical process parameters that should be optimized (e.g., Temperature, pH, Catalyst Conc).
+                2. Formulate a specific search query to find external evidence/patents for optimizing this specific reaction type and parameters. 
+                
+                Output ONLY the search query. Do not output anything else.
+                """
+                
+                try:
+                    query_resp = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[{"role": "user", "content": param_prompt}],
+                        temperature=0.3
+                    )
+                    
+                    raw_content = query_resp.choices[0].message.content or ""
+                    search_query = raw_content.strip().replace('"', '')
+                    status.write(f"Generated Parameter Search Query: **{search_query}**")
+                    
+                    status.update(label="🔍 Searching external evidence...", state="running")
+                    evidence = search_web(search_query)
+                    evidence_text = f"\n\nEXTERNAL SEARCH EVIDENCE:\n{evidence}\n"
+                    
+                    status.write("Evidence gathered.")
+                    status.update(label="Analysis Complete", state="complete", expanded=False)
+                
+                except Exception as e:
+                    status.write(f"Optimization analysis failed: {e}")
+                    status.update(label="Optimization Skipped", state="error", expanded=False)
+
+            history_msgs = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages[-5:]]
             
-            Output ONLY the search query. Do not output anything else.
+            system_prompt = f"""
+            You are a pharma expert assisting with BMR analysis and process optimization.
+            
+            Context:
+            - Reaction Scheme: {reaction_text}
+            - BMR Summary / Data: {process_context}
+            
+            Additional External Evidence:
+            {evidence_text}
+            
+            Instructions:
+            - Analyze the user's question in the context of both the specific chemical reaction (stoichiometry, mechanism) and the recorded BMR process.
+            - If you found evidence, explicitly cite it (e.g., "According to [Title]...") to support your optimization suggestions.
+            - If the evidence is not relevant, rely on general chemical principles but mention that specific search results were limited.
             """
             
+            messages = [{"role": "system", "content": system_prompt}] + history_msgs
+            
             try:
-                query_resp = client.chat.completions.create(
+                stream = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
-                    messages=[{"role":"user","content":param_prompt}],
-                    temperature=0.3
+                    messages=cast(Any, messages),
+                    stream=True,
+                    max_tokens=8192
                 )
                 
-                raw_content = query_resp.choices[0].message.content or ""
-                search_query = raw_content.strip().replace('"', '')
-                status.write(f"Generated Parameter Search Query: **{search_query}**")
+                for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        full_response += chunk.choices[0].delta.content
+                        message_placeholder.markdown(full_response + "▌")
                 
-                # Step 2: Search
-                status.update(label="🔍 Searching external evidence...", state="running")
-                evidence = search_web(search_query)
-                evidence_text = f"\n\nEXTERNAL SEARCH EVIDENCE:\n{evidence}\n"
-                
-                status.write("Evidence gathered.")
-                status.update(label="Analysis Complete", state="complete", expanded=False)
-            
+                message_placeholder.markdown(full_response)
+                st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+            except APIStatusError as e:
+                st.error(f"API Limit Reached: {e}. Please wait a moment.")
             except Exception as e:
-                status.write(f"Optimization analysis failed: {e}")
-                status.update(label="Optimization Skipped", state="error", expanded=False)
-
-        
-        # Step 3: Final Answer
-        # Construct history for API
-        history_msgs = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages[-5:]]
-        
-        system_prompt = f"""
-        You are a pharma expert assisting with BMR analysis and process optimization.
-        
-        Context:
-        - Reaction Scheme: {reaction_text}
-        - BMR Summary / Data: {process_context}
-        
-        Additional External Evidence:
-        {evidence_text}
-        
-        Instructions:
-        - Analyze the user's question in the context of both the specific chemical reaction (stoichiometry, mechanism) and the recorded BMR process.
-        - If you found evidence, explicitly cite it (e.g., "According to [Title]...") to support your optimization suggestions.
-        - If the evidence is not relevant, rely on general chemical principles but mention that specific search results were limited.
-        """
-        
-        messages = [{"role": "system", "content": system_prompt}] + history_msgs
-        
-        try:
-            stream = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=cast(Any, messages),
-                stream=True,
-                max_tokens=8192
-            )
-            
-            for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    full_response += chunk.choices[0].delta.content
-                    message_placeholder.markdown(full_response + "▌")
-            
-            message_placeholder.markdown(full_response)
-        
-            # Add assistant response to chat history
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-        except APIStatusError as e:
-            st.error(f"API Limit Reached: {e}. Please wait a moment.")
-        except Exception as e:
-            st.error(f"Error: {e}")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-            
+                st.error(f"Error: {e}")
